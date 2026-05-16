@@ -624,7 +624,7 @@ async fn run() {
 
                     // draw
                     // fix !
-                    if !is_day {
+                    if is_day {
                         scene.fill(
                             vello::peniko::Fill::NonZero,
                             Affine::IDENTITY,
