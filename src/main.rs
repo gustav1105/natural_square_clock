@@ -1,17 +1,10 @@
 use scz::{NaturalSquaresEngine, SpiralIterator};
-
 use skrifa::{FontRef, MetadataProvider};
-
 use std::sync::Arc;
-
-use vello::kurbo::{Affine, Circle, Line, Point, Rect, Stroke};
-
+use vello::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, Stroke};
 use vello::peniko::Color;
-
 use vello::util::RenderContext;
-
 use vello::{AaConfig, Glyph, Renderer, RendererOptions, Scene};
-
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoop,
@@ -210,33 +203,6 @@ async fn run() {
                     );
 
                     // =====================================================
-                    // 360° TICKS
-                    // =====================================================
-                    for deg in 0..360 {
-                        let angle = deg as f64;
-                        let outer = point_on_circle(center, outer_radius, angle);
-
-                        let tick_len = if deg % 30 == 0 {
-                            72.0
-                        } else if deg % 10 == 0 {
-                            40.0
-                        } else {
-                            20.0
-                        };
-
-                        let inner = point_on_circle(center, outer_radius - tick_len, angle);
-                        let line = Line::new(inner, outer);
-
-                        let color = if deg % 30 == 0 {
-                            Color::rgb8(255, 180, 0)
-                        } else {
-                            Color::rgb8(80, 80, 90)
-                        };
-
-                        scene.stroke(&Stroke::new(1.0), Affine::IDENTITY, color, None, &line);
-                    }
-
-                    // =====================================================
                     // YEAR / DATE RING (Calculations)
                     // =====================================================
                     use chrono::{Datelike, Local, Timelike};
@@ -261,6 +227,27 @@ async fn run() {
 
                     // 3. Align the current time position exactly over today's date marker
                     let clock_rotation_deg = today_angle - time_offset_deg;
+
+                    // =====================================================
+                    // 360° TICKS
+                    // =====================================================
+                    for deg in 0..360 {
+                        let angle = deg as f64;
+                        let outer = point_on_circle(center, outer_radius, angle);
+
+                        let tick_len = if deg % 90 == 0 { 20.0 } else { 0.0 };
+
+                        let inner = point_on_circle(center, outer_radius + tick_len, angle);
+                        let line = Line::new(inner, outer);
+
+                        scene.stroke(
+                            &Stroke::new(1.0),
+                            Affine::IDENTITY,
+                            Color::rgb8(0, 220, 255),
+                            None,
+                            &line,
+                        );
+                    }
 
                     // =====================================================
                     // 24 HOUR DIVIDERS
@@ -357,25 +344,45 @@ async fn run() {
                     }
 
                     // =====================================================
-                    // ZODIAC
+                    // STATIC 13-SIGN MASTER ZODIAC (Aries Hard-Locked to 0° East)
                     // =====================================================
-                    let zodiac = [
-                        ("♈", 0.0),
-                        ("♉", 30.0),
-                        ("♊", 60.0),
-                        ("♋", 90.0),
-                        ("♌", 120.0),
-                        ("♍", 150.0),
-                        ("♎", 180.0),
-                        ("♏", 210.0),
-                        ("♐", 240.0),
-                        ("♑", 270.0),
-                        ("♒", 300.0),
-                        ("♓", 330.0),
+
+                    let zodiac_symbols = [
+                        "♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "⛎", "♐", "♑", "♒",
+                        "♓",
                     ];
 
-                    for (symbol, angle) in zodiac {
-                        let p = point_on_circle(center, outer_radius + 45.0, angle);
+                    for index in 0..13 {
+                        let symbol = zodiac_symbols[index];
+
+                        // Query your engine directly for the pure structural coordinate angle
+                        let base_angle = NaturalSquaresEngine::zodiac_to_angle(index as u32) as f64;
+                        let final_angle = base_angle % 360.0;
+
+                        // -------------------------------------------------
+                        // DRAW GOLDEN AXIS LINES (Outer Edge Straight to Center)
+                        // -------------------------------------------------
+                        let tick_start = point_on_circle(center, outer_radius, final_angle);
+
+                        // Point the line directly into the absolute center point
+                        let tick_end = center;
+
+                        let mut path = vello::kurbo::BezPath::new();
+                        path.move_to(vello::kurbo::Point::new(tick_start.x, tick_start.y));
+                        path.line_to(vello::kurbo::Point::new(tick_end.x, tick_end.y));
+
+                        scene.stroke(
+                            &vello::kurbo::Stroke::new(1.0),
+                            vello::kurbo::Affine::IDENTITY,
+                            &Color::rgb8(255, 140, 0), // Fucking golden lines
+                            None,
+                            &path,
+                        );
+
+                        // -------------------------------------------------
+                        // DRAW GLYPH LABELS
+                        // -------------------------------------------------
+                        let p = point_on_circle(center, outer_radius + 45.0, final_angle);
                         let mut x_cursor = p.x - 12.0;
                         let y_cursor = p.y + 10.0;
 
@@ -396,7 +403,7 @@ async fn run() {
                         scene
                             .draw_glyphs(&symbol_font)
                             .font_size(30.0)
-                            .brush(&Color::rgb8(255, 220, 120))
+                            .brush(&Color::rgb8(255, 220, 120)) // Gold Labels
                             .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
                     }
 
@@ -484,9 +491,9 @@ async fn run() {
                             let p2 = point_on_circle(center, r, angle2);
 
                             let web_color = if i % 2 == 0 {
-                                Color::rgb8(0, 180, 0)
+                                Color::rgb8(90, 90, 100)
                             } else {
-                                Color::rgb8(180, 180, 0)
+                                Color::rgb8(93, 99, 100)
                             };
 
                             scene.stroke(
@@ -506,9 +513,9 @@ async fn run() {
                         let line = Line::new(center, end);
 
                         let color = if i % 2 == 0 {
-                            Color::LIME
+                            Color::rgb8(90, 90, 100)
                         } else {
-                            Color::YELLOW
+                            Color::rgb8(93, 99, 100)
                         };
 
                         scene.stroke(&Stroke::new(1.4), Affine::IDENTITY, color, None, &line);
@@ -539,6 +546,92 @@ async fn run() {
                             .font_size(11.0)
                             .brush(&Color::rgb8(200, 200, 210))
                             .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
+                    }
+                    let mut zodiac_angles = [0.0f64; 13];
+
+                    for i in 0..13 {
+                        zodiac_angles[i] = NaturalSquaresEngine::zodiac_to_angle(i as u32) as f64;
+                    }
+
+                    let utc_now = chrono::Utc::now();
+
+                    // pick your location (example: Johannesburg)
+                    let longitude = 28.0473;
+                    let latitude = -26.2041;
+
+                    let is_day = NaturalSquaresEngine::is_daylight(utc_now, longitude, latitude);
+                    // =====================================================
+                    // SUNLIGHT CONE (FROM dateTick SEGMENT)
+                    // =====================================================
+
+                    let r = outer_radius;
+                    let today_day_of_year = (today_resolved.ordinal() - 1) as f32;
+
+                    // THIS is your canonical circular position for "today"
+                    let date_tick =
+                        NaturalSquaresEngine::day_of_year_to_angle(today_day_of_year, true) as f64;
+                    let tick = date_tick.rem_euclid(360.0);
+
+                    let mut sun_index = 0usize;
+
+                    // find which zodiac segment contains tick
+                    for i in 0..zodiac_angles.len() - 1 {
+                        let a0 = zodiac_angles[i].rem_euclid(360.0);
+                        let mut b0 = zodiac_angles[i + 1].rem_euclid(360.0);
+
+                        if b0 < a0 {
+                            b0 += 360.0;
+                        }
+
+                        let mut t = tick;
+                        if t < a0 {
+                            t += 360.0;
+                        }
+
+                        if t >= a0 && t < b0 {
+                            sun_index = i;
+                            break;
+                        }
+                    }
+
+                    // Aries (0) → Taurus (1) replaced by selected segment
+                    let a = zodiac_angles[sun_index].rem_euclid(360.0);
+                    let mut b = zodiac_angles[sun_index + 1].rem_euclid(360.0);
+
+                    // ensure correct sweep direction
+                    if b < a {
+                        b += 360.0;
+                    }
+
+                    let steps = 20;
+
+                    let mut sun_path = BezPath::new();
+
+                    // center
+                    sun_path.move_to(center);
+
+                    // build fan
+                    for i in 0..=steps {
+                        let t = i as f64 / steps as f64;
+                        let angle = a + (b - a) * t;
+
+                        let p = point_on_circle(center, r, angle);
+                        sun_path.line_to(p);
+                    }
+
+                    // close back to center
+                    sun_path.close_path();
+
+                    // draw
+                    // fix !
+                    if !is_day {
+                        scene.fill(
+                            vello::peniko::Fill::NonZero,
+                            Affine::IDENTITY,
+                            Color::rgba8(255, 210, 80, 35),
+                            None,
+                            &sun_path,
+                        );
                     }
 
                     // =====================================================

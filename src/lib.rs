@@ -76,13 +76,36 @@ impl NaturalSquaresEngine {
     }
 
     // =====================================================
-    // ZODIAC
+    // ZODIAC CALCULATOR (13-Sign Astronomical System)
     //
-    // 1 sign = 30°
+    // Converts the true structural Right Ascension (RA)
+    // boundary hours into geometry based on your system's
+    // baseline math (1 hour = 15°).
+    // Aries is hard-locked at index 0 to 0.0° (East).
     // =====================================================
-
     pub fn zodiac_to_angle(index: u32) -> f32 {
-        (index as f32) * 30.0
+        // High-precision astronomical Right Ascension boundaries (in decimal hours)
+        let ra_hour = match index {
+            0 => 0.0,      // ♈ Aries (Vernal Equinox baseline anchor)
+            1 => 1.7513,   // ♉ Taurus
+            2 => 4.2611,   // ♊ Gemini
+            3 => 6.2231,   // ♋ Cancer
+            4 => 7.6106,   // ♌ Leo
+            5 => 10.0411,  // ♍ Virgo
+            6 => 12.9664,  // ♎ Libra
+            7 => 14.3533,  // ♏ Scorpio
+            8 => 14.9061,  // ⛎ Ophiuchus
+            9 => 16.1147,  // ♐ Sagittarius
+            10 => 18.3231, // ♑ Capricorn
+            11 => 20.1253, // ♒ Aquarius
+            12 => 21.6947, // ♓ Pisces
+            _ => 0.0,
+        };
+
+        // Convert the RA hours value directly to geometric degrees (15° per hour)
+        let angle = ra_hour * 15.0;
+
+        angle as f32
     }
 
     // =====================================================
@@ -119,6 +142,102 @@ impl NaturalSquaresEngine {
     // OPTIONAL: equinox alignment helper
     pub fn equinox_offset(&self, offset_days: f32) -> f32 {
         (offset_days / 365.2422) * 360.0
+    }
+
+    /// Calculates Local Sidereal Time (LST) in degrees [0, 360)
+    /// for a given UTC timestamp and geographic longitude.
+    /// Longitude: East is positive, West is negative (e.g., 25.45 for UTC+2 regions).
+    pub fn calculate_local_sidereal_time_deg(
+        utc_time: chrono::DateTime<chrono::Utc>,
+        longitude_deg: f64,
+    ) -> f64 {
+        use chrono::Datelike;
+        use chrono::Timelike;
+
+        // 1. Convert to Julian Date (JD) at 0h UTC for the current day
+        let year = utc_time.year() as f64;
+        let month = utc_time.month() as f64;
+
+        let (y, m) = if month <= 2.0 {
+            (year - 1.0, month + 12.0)
+        } else {
+            (year, month)
+        };
+
+        let a = (y / 100.0).floor();
+        let b = 2.0 - a + (a / 4.0).floor();
+
+        let jd_0h = (365.25 * (y + 4716.0)).floor()
+            + (30.6001 * (m + 1.0)).floor()
+            + day_of_year_to_angle_helper_jd_day(b);
+
+        fn day_of_year_to_angle_helper_jd_day(b: f64) -> f64 {
+            b - 1524.5
+        }
+
+        // 2. Calculate time centuries since J2000.0
+        let t = (jd_0h - 2451545.0) / 36525.0;
+
+        // 3. IAU 1982 formula for Greenwich Mean Sidereal Time (GMST) at 0h UTC (in seconds)
+        let gmst_0h =
+            24110.54841 + (8640184.812866 * t) + (0.093104 * t * t) - (6.2e-6 * t * t * t);
+
+        // Convert GMST seconds to degrees (15 degrees per hour, 24 hours = 86400 seconds)
+        let mut gmst_0h_deg = (gmst_0h / 86400.0 * 360.0) % 360.0;
+        if gmst_0h_deg < 0.0 {
+            gmst_0h_deg += 360.0;
+        }
+
+        // 4. Add the elapsed universal time of the current day with the sidereal rate multiplier (1.00273790935)
+        let utc_seconds = (utc_time.hour() as f64 * 3600.0)
+            + (utc_time.minute() as f64 * 60.0)
+            + (utc_time.second() as f64)
+            + (utc_time.nanosecond() as f64 / 1_000_000_000.0);
+
+        let elapsed_deg = utc_seconds * (15.0 / 3600.0) * 1.00273790935;
+
+        // 5. Compute Local Sidereal Time by incorporating your longitude
+        let mut lst_deg = gmst_0h_deg + elapsed_deg + longitude_deg;
+        lst_deg %= 360.0;
+        if lst_deg < 0.0 {
+            lst_deg += 360.0;
+        }
+
+        lst_deg
+    }
+
+    pub fn is_daylight(
+        utc: chrono::DateTime<chrono::Utc>,
+        longitude_deg: f64,
+        latitude_deg: f64,
+    ) -> bool {
+        use chrono::Timelike;
+
+        // Local sidereal time
+        let lst = Self::calculate_local_sidereal_time_deg(utc, longitude_deg);
+
+        // Convert to hour angle (simplified solar model)
+        let hour_angle = (lst % 360.0) - 180.0;
+
+        // Solar declination approximation (good enough for visual system)
+        let day_of_year = utc.ordinal() as f64;
+        let decl = (23.44f64.to_radians()
+            * (360.0 / 365.2422 * (day_of_year - 81.0)).to_radians().sin())
+        .to_degrees();
+
+        // Convert latitude + declination into horizon threshold
+        let lat = latitude_deg;
+
+        let cos_h0 = -lat.to_radians().sin() * decl.to_radians().sin()
+            / (lat.to_radians().cos() * decl.to_radians().cos());
+
+        // clamp safety
+        let cos_h0 = cos_h0.clamp(-1.0, 1.0);
+
+        let sunset_hour_angle = cos_h0.acos().to_degrees();
+
+        // daylight if sun is within horizon arc
+        hour_angle.abs() < sunset_hour_angle
     }
 }
 
