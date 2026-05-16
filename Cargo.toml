@@ -1,0 +1,22 @@
+[package]
+name = "scz"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Logic
+chrono = "0.4"
+glam = "0.24"
+num = "0.4"
+
+# Rendering & Windowing
+winit = "0.29"
+vello = { version = "0.3.0", features = ["wgpu"] }
+egui = "0.27"
+
+# Spatial
+geo-types = "0.7"
+pollster = "0.4.0"
+
+skrifa = "0.22" # Latest for 2026
+# ... your other dependencies
