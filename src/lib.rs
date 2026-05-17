@@ -213,31 +213,54 @@ impl NaturalSquaresEngine {
     ) -> bool {
         use chrono::Timelike;
 
-        // Local sidereal time
-        let lst = Self::calculate_local_sidereal_time_deg(utc, longitude_deg);
+        // 1. Calculate Fractional Day of Year (Jan 1 = 1.0)
+        // Using a standard high-precision baseline where Day 80 is the Vernal Equinox
+        let day_of_year = utc.ordinal() as f64
+            + (utc.hour() as f64 / 24.0)
+            + (utc.minute() as f64 / 1440.0)
+            + (utc.second() as f64 / 86400.0);
 
-        // Convert to hour angle (simplified solar model)
-        let hour_angle = (lst % 360.0) - 180.0;
+        // 2. High-Precision Solar Declination Angle approximation (in Degrees)
+        // Standard solar orbital position relative to the celestial equator
+        let solar_noon_anomaly = (360.0 / 365.2422) * (day_of_year - 80.0);
+        let declination_deg = 23.44 * solar_noon_anomaly.to_radians().sin();
 
-        // Solar declination approximation (good enough for visual system)
-        let day_of_year = utc.ordinal() as f64;
-        let decl = (23.44f64.to_radians()
-            * (360.0 / 365.2422 * (day_of_year - 81.0)).to_radians().sin())
-        .to_degrees();
+        // 3. Calculate Local Apparent Solar Time (Hour Angle)
+        // Find fractional UTC hours elapsed
+        let utc_hours =
+            utc.hour() as f64 + (utc.minute() as f64 / 60.0) + (utc.second() as f64 / 3600.0);
 
-        // Convert latitude + declination into horizon threshold
-        let lat = latitude_deg;
+        // Convert geographic longitude directly to a solar time offset (15 degrees per hour)
+        let local_solar_time_hours = utc_hours + (longitude_deg / 15.0);
 
-        let cos_h0 = -lat.to_radians().sin() * decl.to_radians().sin()
-            / (lat.to_radians().cos() * decl.to_radians().cos());
+        // Normalize to a standard 24-hour day framework
+        let local_solar_time_wrapped = local_solar_time_hours.rem_euclid(24.0);
 
-        // clamp safety
-        let cos_h0 = cos_h0.clamp(-1.0, 1.0);
+        // Calculate Solar Hour Angle (H): Noon is 0 degrees.
+        // 1 hour = 15 degrees.
+        // This scales perfectly with your counter-clockwise 24h UI ring.
+        let hour_angle_deg = (local_solar_time_wrapped - 12.0) * 15.0;
 
-        let sunset_hour_angle = cos_h0.acos().to_degrees();
+        // 4. Determine Horizon Threshold Arc using Spherical Trigonometry
+        let lat_rad = latitude_deg.to_radians();
+        let decl_rad = declination_deg.to_radians();
 
-        // daylight if sun is within horizon arc
-        hour_angle.abs() < sunset_hour_angle
+        let cos_h0 = -lat_rad.sin() * decl_rad.sin() / (lat_rad.cos() * decl_rad.cos());
+
+        // 5. Boundary protections for Polar Regions (24hr Night / 24hr Day)
+        if cos_h0 >= 1.0 {
+            // Sun never rises (Polar Night)
+            return false;
+        } else if cos_h0 <= -1.0 {
+            // Sun never sets (Midnight Sun)
+            return true;
+        }
+
+        // Calculate the sunset hour angle maximum arc limit
+        let sunset_hour_angle_limit = cos_h0.acos().to_degrees();
+
+        // 6. Return state: True if the absolute hour angle is within day limits
+        hour_angle_deg.abs() <= sunset_hour_angle_limit
     }
 }
 
