@@ -1,5 +1,14 @@
-use chrono::{Datelike, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Timelike, Utc};
 use glam::Vec2;
+use swiss_eph::safe::{CalcFlags, Planet, calc, julday};
+
+#[derive(Debug, Clone)]
+pub struct PlanetPosition {
+    pub name: &'static str,
+    pub angle: f64,
+    pub distance: f64,
+    pub speed: f64,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Direction {
@@ -18,8 +27,123 @@ pub struct GridPoint {
 pub struct NaturalSquaresEngine {
     pub epoch_date: NaiveDate,
 }
+pub struct MoonState {
+    /// The absolute geometric angle (0 to 360) where 0 is the Vernal Equinox (Aries 0° East)
+    pub zodiac_angle: f64,
+    /// Moon phase illumination percentage (0.0 = New Moon, 1.0 = Full Moon)
+    pub phase: f64,
+}
 
 impl NaturalSquaresEngine {
+    pub fn calculate_planetary_positions(utc: DateTime<Utc>) -> Vec<PlanetPosition> {
+        let local_tz = utc + Duration::hours(2);
+
+        let hour_fraction = local_tz.hour() as f64 / 24.0
+            + local_tz.minute() as f64 / 1440.0
+            + local_tz.second() as f64 / 86400.0;
+
+        let jd_ut = julday(
+            utc.year(),
+            utc.month() as i32,
+            utc.day() as i32,
+            hour_fraction * 24.0,
+        );
+
+        // Natively handled by the idiomatic `calc` function
+        let flags = CalcFlags::new().with_speed();
+
+        let targets = [
+            (Planet::Sun, "Sun"),
+            (Planet::Moon, "Moon"),
+            (Planet::Mercury, "Mercury"),
+            (Planet::Venus, "Venus"),
+            (Planet::Mars, "Mars"),
+            (Planet::Jupiter, "Jupiter"),
+            (Planet::Saturn, "Saturn"),
+            (Planet::Uranus, "Uranus"),
+            (Planet::Neptune, "Neptune"),
+        ];
+
+        targets
+            .iter()
+            .map(|(body, name)| {
+                // Fixed: Using `calc` with native types directly, no manual casting or bit-extraction needed
+                match calc(jd_ut, *body, flags) {
+                    Ok(res) => PlanetPosition {
+                        name,
+                        angle: res.longitude,
+                        distance: res.distance,
+                        speed: res.longitude_speed,
+                    },
+                    Err(_) => PlanetPosition {
+                        name,
+                        angle: 0.0,
+                        distance: 0.0,
+                        speed: 0.0,
+                    },
+                }
+            })
+            .collect()
+    }
+    /// Computes the Moon's zodiac angle and illumination fraction using high-precision J2000 epoch baselines.
+    pub fn calculate_moon_state(utc: chrono::DateTime<chrono::Utc>) -> MoonState {
+        use chrono::Datelike;
+        use chrono::Timelike;
+
+        // 1. Calculate Julian Date relative to J2000.0 (January 1, 2000, 12:00 UTC)
+        let year = utc.year() as f64;
+        let month = utc.month() as f64;
+        let day = utc.day() as f64;
+
+        let hour_fraction =
+            utc.hour() as f64 / 24.0 + utc.minute() as f64 / 1440.0 + utc.second() as f64 / 86400.0;
+
+        // Simplified Julian Date calculation valid for 1901-2099
+        let base_jd = 367.0 * year
+            - ((7.0 * (year + ((month + 9.0) / 12.0).floor())) / 4.0).floor()
+            + ((275.0 * month) / 9.0).floor()
+            + day
+            + 1721013.5;
+
+        let jd = base_jd + hour_fraction;
+        let days_since_j2000 = jd - 2451545.0;
+
+        // 2. Calculate Mean Longitude of the Moon (Mean position along the ecliptic)
+        // At J2000, the Moon was at 218.316° and progresses at roughly 13.176396° per day
+        let moon_mean_long = (218.316 + 13.17639648 * days_since_j2000).rem_euclid(360.0);
+
+        // 3. Calculate Mean Anomaly of the Moon (Its position along its own elliptical orbit)
+        let moon_mean_anomaly = (134.963 + 13.06499295 * days_since_j2000).to_radians();
+
+        // 4. Calculate Mean Anomaly of the Sun (Needed for the phase and minor pertubations)
+        let sun_mean_anomaly = (357.529 + 0.98560028 * days_since_j2000).to_radians();
+
+        // 5. Apply primary Evection and Keplerian orbit corrections to find True Geocentric Ecliptic Longitude
+        // This shifts it from an ideal circle to its actual warped speed through the sky
+        let correction = 6.289 * moon_mean_anomaly.sin()
+            + 1.274 * (2.0 * moon_mean_long.to_radians() - moon_mean_anomaly).sin()
+            - 0.658 * (2.0 * (moon_mean_long.to_radians() - sun_mean_anomaly)).sin()
+            - 0.214 * (2.0 * moon_mean_anomaly).sin();
+
+        // This is our precise 0-360 true position of the moon relative to the Vernal Equinox!
+        let true_moon_longitude = (moon_mean_long + correction).rem_euclid(360.0);
+
+        // 6. Calculate Moon Phase Illumination (Age / Elongation relative to the Sun)
+        // Sun's mean longitude relative to J2000
+        let sun_mean_long = (280.460 + 0.9856474 * days_since_j2000).rem_euclid(360.0);
+        // Elongation is the angular distance between Moon and Sun
+        let elongation = (true_moon_longitude - sun_mean_long)
+            .rem_euclid(360.0)
+            .to_radians();
+
+        // Phase calculation: 0.0 (New Moon), 0.5 (Quarter), 1.0 (Full Moon)
+        let phase = (1.0 - elongation.cos()) / 2.0;
+
+        MoonState {
+            zodiac_angle: true_moon_longitude,
+            phase,
+        }
+    }
     pub fn new(epoch: NaiveDate) -> Self {
         Self { epoch_date: epoch }
     }

@@ -478,33 +478,6 @@ async fn run() {
 
                     let step = 360.0 / 8.0;
                     let labels = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"];
-                    let max_web_layers = 14;
-
-                    // Draw Web Layers
-                    for layer in 1..=max_web_layers {
-                        let r = layer as f64 * scale;
-                        for i in 0..8 {
-                            let angle1 = (i as f64 * step) + octave_rotation;
-                            let angle2 = ((i + 1) as f64 * step) + octave_rotation;
-
-                            let p1 = point_on_circle(center, r, angle1);
-                            let p2 = point_on_circle(center, r, angle2);
-
-                            let web_color = if i % 2 == 0 {
-                                Color::rgb8(90, 90, 100)
-                            } else {
-                                Color::rgb8(93, 99, 100)
-                            };
-
-                            scene.stroke(
-                                &Stroke::new(0.8),
-                                Affine::IDENTITY,
-                                web_color,
-                                None,
-                                &Line::new(p1, p2),
-                            );
-                        }
-                    }
 
                     // Draw Axis Lines & Direction Labels
                     for i in 0..8 {
@@ -633,7 +606,177 @@ async fn run() {
                             &sun_path,
                         );
                     }
+                    // =====================================================
+                    // MOONLIGHT CONE (Aligned to your exact Solar Pipeline)
+                    // =====================================================
+                    let moon_state = NaturalSquaresEngine::calculate_moon_state(utc_now);
 
+                    // We use the exact same coordinate system mapping as your Sun loop
+                    let moon_tick = moon_state.zodiac_angle;
+                    let mut moon_index = 0usize;
+
+                    // 1. Match the Moon's angle using your exact Solar segment finder
+                    for i in 0..zodiac_angles.len() - 1 {
+                        let a0 = zodiac_angles[i];
+                        let mut b0 = zodiac_angles[i + 1];
+
+                        // Handle the 360-degree boundary wrap-around exactly like your Sun does
+                        if b0 < a0 {
+                            b0 += 360.0;
+                        }
+
+                        let mut t = moon_tick;
+                        if t < a0 {
+                            t += 360.0;
+                        }
+
+                        if t >= a0 && t < b0 {
+                            moon_index = i;
+                            break;
+                        }
+                    }
+
+                    // 2. Extract bounding vectors for the active Moon segment
+                    let moon_a = zodiac_angles[moon_index];
+                    let mut moon_b = zodiac_angles[moon_index + 1];
+
+                    if moon_b < moon_a {
+                        moon_b += 360.0;
+                    }
+
+                    // 3. Build the geometry wedge for Vello using your point_on_circle pipeline
+                    let mut moon_path = BezPath::new();
+                    moon_path.move_to(center);
+
+                    let steps = 20;
+                    for i in 0..=steps {
+                        let t = i as f64 / steps as f64;
+                        let angle = moon_a + (moon_b - moon_a) * t;
+                        let p = point_on_circle(center, outer_radius, angle);
+                        moon_path.line_to(p);
+                    }
+                    moon_path.close_path();
+
+                    // 4. Compute Silver Brightness Alpha Value based on Phase (Luminescence)
+                    // We define a floor alpha (so it's never totally invisible) and a peak alpha.
+                    let min_alpha = 6.0; // Dark, dim silver ghost line during New Moon
+                    let max_alpha = 45.0; // Full radiant glow during Full Moon
+
+                    // Linear interpolation between the dark floor and max illumination
+                    let dynamic_alpha = min_alpha + (moon_state.phase * (max_alpha - min_alpha));
+                    let calculated_alpha = dynamic_alpha.clamp(0.0, 255.0) as u8;
+
+                    // 5. Paint the independent silver wedge onto the scene
+                    scene.fill(
+                        vello::peniko::Fill::NonZero,
+                        Affine::IDENTITY,
+                        // Radiant silver bright tone with live, dynamic phase alpha
+                        Color::rgba8(220, 230, 255, calculated_alpha),
+                        None,
+                        &moon_path,
+                    );
+
+                    // =====================================================
+                    // PLANETARY PERIMETER WHEEL
+                    // =====================================================
+                    // 1. Calculate bounding circle radius to perfectly cover the square grid corners
+                    // 361 points means a 19x19 square grid. Max extent is 9 grid units out from center.
+                    let max_grid_extent = 9.0 * scale;
+                    let inner_gray_radius = ((max_grid_extent * max_grid_extent)
+                        + (max_grid_extent * max_grid_extent))
+                        .sqrt();
+                    let planetary_label_radius = inner_gray_radius + 25.0; // Place emojis just outside the ring
+
+                    // 2. Render the bounding Gray Perimeter Circle
+                    let gray_perimeter = Circle::new(center, inner_gray_radius);
+                    scene.stroke(
+                        &Stroke::new(1.5),
+                        Affine::IDENTITY,
+                        Color::rgb8(70, 75, 80), // Clean neutral gray perimeter ring
+                        None,
+                        &gray_perimeter,
+                    );
+
+                    // 3. Call your engine's precise calculation function directly
+                    let planetary_positions =
+                        NaturalSquaresEngine::calculate_planetary_positions(utc_now);
+
+                    // 4. Iterate over 360 degrees to lay down ticks
+                    for deg in 0..360 {
+                        let angle_deg = deg as f64;
+
+                        // Check if this specific integer degree matches any planet's rounded position
+                        let has_planet = planetary_positions
+                            .iter()
+                            .any(|p| p.angle.round() as i32 == deg);
+
+                        // Define tick parameters based on whether a planet is sitting on it
+                        let tick_len = if has_planet { 10.0 } else { 6.0 };
+                        let stroke_width = if has_planet { 2.0 } else { 1.0 };
+                        let tick_color = if has_planet {
+                            Color::rgb8(255, 210, 80) // Beautiful Gold Highlight Tick
+                        } else {
+                            Color::rgb8(70, 75, 80) // Standard Perimeter Gray Tick
+                        };
+
+                        // Calculate points (ticks extend slightly inward from perimeter line)
+                        let outer_pt = point_on_circle(center, inner_gray_radius, angle_deg);
+                        let inner_pt =
+                            point_on_circle(center, inner_gray_radius + tick_len, angle_deg);
+                        let tick_line = Line::new(inner_pt, outer_pt);
+
+                        scene.stroke(
+                            &Stroke::new(stroke_width),
+                            Affine::IDENTITY,
+                            tick_color,
+                            None,
+                            &tick_line,
+                        );
+                    }
+
+                    // 5. Draw the Planetary Emojis outside the circle matching their engine coordinates
+                    for planet in &planetary_positions {
+                        // Map the engine's string names to their updated color emojis
+                        let emoji = match planet.name {
+                            "Sun" => "☀️",
+                            "Moon" => "🌙",
+                            "Venus" => "♀️",   // Forced emoji via variation selector
+                            "Mars" => "♂️",    // Forced emoji via variation selector
+                            "Jupiter" => "🪐", // Forced emoji via variation selector
+                            "Mercury" => "⚧️", // Forced emoji via variation selector
+                            "Saturn" => "✡️",
+                            "Uranus" => "♍️",
+                            "Neptune" => "🔱",
+                            _ => "✨",
+                        };
+
+                        let label_pos =
+                            point_on_circle(center, planetary_label_radius, planet.angle);
+
+                        // Center alignment shifts for the rendering bounding box
+                        let mut x_cursor = label_pos.x - 10.0;
+                        let y_cursor = label_pos.y + 8.0;
+
+                        let glyphs: Vec<Glyph> = emoji
+                            .chars()
+                            .map(|c| {
+                                let gid = symbol_charmap.map(c).unwrap_or_default();
+                                let g = Glyph {
+                                    id: gid.to_u32(),
+                                    x: x_cursor as f32,
+                                    y: y_cursor as f32,
+                                };
+                                x_cursor += 12.0;
+                                g
+                            })
+                            .collect();
+
+                        scene
+                            .draw_glyphs(&symbol_font)
+                            .font_size(22.0)
+                            .brush(&Color::WHITE)
+                            .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
+                    }
                     // =====================================================
                     // RENDER
                     // =====================================================

@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 # Logic
-chrono = "0.4"
-glam = "0.24"
+chrono = { version = "0.4", features = ["alloc"] }
+glam = "0.29" # Matching your use of Vec2
 num = "0.4"
 
 # Rendering & Windowing
@@ -19,4 +19,4 @@ geo-types = "0.7"
 pollster = "0.4.0"
 
 skrifa = "0.22" # Latest for 2026
-# ... your other dependencies
+swiss-eph = { version = "0.2", features = ["embedded-ephe"] }
