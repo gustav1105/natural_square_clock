@@ -202,34 +202,31 @@ impl NaturalSquaresEngine {
     // =====================================================
     // ZODIAC CALCULATOR (13-Sign Astronomical System)
     //
-    // Converts the true structural Right Ascension (RA)
-    // boundary hours into geometry based on your system's
-    // baseline math (1 hour = 15°).
-    // Aries is hard-locked at index 0 to 0.0° (East).
+    // Converts the true structural ecliptic intersections
+    // of the 13 IAU constellations into geometric degrees.
+    // Aries 0° is locked to the modern astronomical
+    // coordinate baseline. Natively counter-clockwise.
     // =====================================================
     pub fn zodiac_to_angle(index: u32) -> f32 {
-        // High-precision astronomical Right Ascension boundaries (in decimal hours)
-        let ra_hour = match index {
-            0 => 0.0,      // ♈ Aries (Vernal Equinox baseline anchor)
-            1 => 1.7513,   // ♉ Taurus
-            2 => 4.2611,   // ♊ Gemini
-            3 => 6.2231,   // ♋ Cancer
-            4 => 7.6106,   // ♌ Leo
-            5 => 10.0411,  // ♍ Virgo
-            6 => 12.9664,  // ♎ Libra
-            7 => 14.3533,  // ♏ Scorpio
-            8 => 14.9061,  // ⛎ Ophiuchus
-            9 => 16.1147,  // ♐ Sagittarius
-            10 => 18.3231, // ♑ Capricorn
-            11 => 20.1253, // ♒ Aquarius
-            12 => 21.6947, // ♓ Pisces
+        // Precise physical ecliptic boundary entry points (Degrees of Ecliptic Longitude)
+        let boundary_deg = match index {
+            0 => 29.0,   // ♈ Aries (Sun enters approx April 19)
+            1 => 53.0,   // ♉ Taurus (Sun enters approx May 14)
+            2 => 90.0,   // ♊ Gemini (Sun enters approx June 20)
+            3 => 119.0,  // ♋ Cancer (Sun enters approx July 21)
+            4 => 138.0,  // ♌ Leo (Sun enters approx August 10)
+            5 => 174.0,  // ♍ Virgo (Sun enters approx September 16)
+            6 => 217.0,  // ♎ Libra (Sun enters approx October 31)
+            7 => 241.0,  // ♏ Scorpio (Sun enters approx November 23)
+            8 => 248.0,  // ⛎ Ophiuchus (Sun enters exactly Nov 30 - Dec 17)
+            9 => 266.0,  // ♐ Sagittarius (Sun enters approx December 18)
+            10 => 299.0, // ♑ Capricorn (Sun enters approx January 19)
+            11 => 327.0, // ♒ Aquarius (Sun enters approx February 16)
+            12 => 351.0, // ♓ Pisces (Sun enters approx March 12)
             _ => 0.0,
         };
 
-        // Convert the RA hours value directly to geometric degrees (15° per hour)
-        let angle = ra_hour * 15.0;
-
-        angle as f32
+        boundary_deg as f32
     }
 
     // =====================================================
