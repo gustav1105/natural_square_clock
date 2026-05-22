@@ -187,7 +187,105 @@ async fn run() {
                             .brush(&Color::WHITE)
                             .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
                     }
+                    // =====================================================
+                    // CYAN ROLLING GEOMETRIC SEQUENCE (CENTER ANCHORED)
+                    // =====================================================
+                    if let Some(&(1, first_x, first_y)) =
+                        grid_points.iter().find(|(val, _, _)| *val == 1)
+                    {
+                        let stroke_cyan = Stroke::new(0.75); // Thin line
+                        let brush_cyan = Color::rgb8(0, 255, 255);
 
+                        // 1. Establish the geometry of the first box
+                        let p1_center_x = center_x + (first_x as f64 * scale);
+                        let p1_center_y = center_y - (first_y as f64 * scale);
+
+                        let top_y = p1_center_y - scale / 2.0;
+                        let bottom_y = p1_center_y + scale / 2.0;
+                        let left_x = p1_center_x - scale / 2.0;
+                        let right_x = p1_center_x + scale / 2.0;
+
+                        // PINNED CENTER POINT: The true center of the initial square box
+                        let square_center = Point::new(p1_center_x, p1_center_y);
+
+                        // Initial tracking target begins at the top-right corner of the first square
+                        let mut top_right = Point::new(right_x, top_y);
+
+                        for _iteration in 0..9 {
+                            // Radius expands outwards from the stationary square center to the moving top_right
+                            let diagonal_distance = top_right.distance(square_center);
+                            let radius = diagonal_distance;
+
+                            let circle = Circle::new(square_center, radius);
+                            scene.stroke(&stroke_cyan, Affine::IDENTITY, brush_cyan, None, &circle);
+
+                            // Calculate the bottom intersection point from the center
+                            let bottom_intersect = Point::new(square_center.x + radius, bottom_y);
+
+                            // Scale the elevation height proportionally from the center's baseline
+                            let current_distance = radius;
+                            let dynamic_top_y = square_center.y - current_distance;
+
+                            // Construct the updated top_intersect point
+                            let top_intersect = Point::new(bottom_intersect.x, dynamic_top_y);
+
+                            // --- DRAW SQUARES AROUND THE CIRCLES ---
+                            // Calculate the extreme coordinates for a box of size radius * 2 centered at square_center
+                            let box_left = square_center.x - radius;
+                            let box_right = square_center.x + radius;
+                            let box_top = square_center.y - radius;
+                            let box_bottom = square_center.y + radius;
+
+                            // Draw Top Edge
+                            scene.stroke(
+                                &stroke_cyan,
+                                Affine::IDENTITY,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_left, box_top),
+                                    Point::new(box_right, box_top),
+                                ),
+                            );
+                            // Draw Bottom Edge
+                            scene.stroke(
+                                &stroke_cyan,
+                                Affine::IDENTITY,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_left, box_bottom),
+                                    Point::new(box_right, box_bottom),
+                                ),
+                            );
+                            // Draw Left Edge
+                            scene.stroke(
+                                &stroke_cyan,
+                                Affine::IDENTITY,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_left, box_top),
+                                    Point::new(box_left, box_bottom),
+                                ),
+                            );
+                            // Draw Right Edge
+                            scene.stroke(
+                                &stroke_cyan,
+                                Affine::IDENTITY,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_right, box_top),
+                                    Point::new(box_right, box_bottom),
+                                ),
+                            );
+                            // ---------------------------------------
+
+                            // Feed the new expanding intersection back to top_right for the next loop pass
+                            top_right = top_intersect;
+                        }
+                    }
                     // =====================================================
                     // OUTER RING
                     // =====================================================
@@ -681,7 +779,7 @@ async fn run() {
                     // =====================================================
                     // 1. Calculate bounding circle radius to perfectly cover the square grid corners
                     // 361 points means a 19x19 square grid. Max extent is 9 grid units out from center.
-                    let max_grid_extent = 9.0 * scale;
+                    let max_grid_extent = 9.56 * scale;
                     let inner_gray_radius = ((max_grid_extent * max_grid_extent)
                         + (max_grid_extent * max_grid_extent))
                         .sqrt();
@@ -742,10 +840,10 @@ async fn run() {
                             "Moon" => "🌙",
                             "Venus" => "♀️",   // Forced emoji via variation selector
                             "Mars" => "♂️",    // Forced emoji via variation selector
-                            "Jupiter" => "🪐", // Forced emoji via variation selector
+                            "Jupiter" => "🟠", // Forced emoji via variation selector
                             "Mercury" => "⚧️", // Forced emoji via variation selector
-                            "Saturn" => "✡️",
-                            "Uranus" => "♍️",
+                            "Saturn" => "🪐",
+                            "Uranus" => "🌀",
                             "Neptune" => "🔱",
                             _ => "✨",
                         };
