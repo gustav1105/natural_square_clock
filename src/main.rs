@@ -188,105 +188,6 @@ async fn run() {
                             .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
                     }
                     // =====================================================
-                    // CYAN ROLLING GEOMETRIC SEQUENCE (CENTER ANCHORED)
-                    // =====================================================
-                    if let Some(&(1, first_x, first_y)) =
-                        grid_points.iter().find(|(val, _, _)| *val == 1)
-                    {
-                        let stroke_cyan = Stroke::new(0.75); // Thin line
-                        let brush_cyan = Color::rgb8(0, 255, 255);
-
-                        // 1. Establish the geometry of the first box
-                        let p1_center_x = center_x + (first_x as f64 * scale);
-                        let p1_center_y = center_y - (first_y as f64 * scale);
-
-                        let top_y = p1_center_y - scale / 2.0;
-                        let bottom_y = p1_center_y + scale / 2.0;
-                        let left_x = p1_center_x - scale / 2.0;
-                        let right_x = p1_center_x + scale / 2.0;
-
-                        // PINNED CENTER POINT: The true center of the initial square box
-                        let square_center = Point::new(p1_center_x, p1_center_y);
-
-                        // Initial tracking target begins at the top-right corner of the first square
-                        let mut top_right = Point::new(right_x, top_y);
-
-                        for _iteration in 0..9 {
-                            // Radius expands outwards from the stationary square center to the moving top_right
-                            let diagonal_distance = top_right.distance(square_center);
-                            let radius = diagonal_distance;
-
-                            let circle = Circle::new(square_center, radius);
-                            scene.stroke(&stroke_cyan, Affine::IDENTITY, brush_cyan, None, &circle);
-
-                            // Calculate the bottom intersection point from the center
-                            let bottom_intersect = Point::new(square_center.x + radius, bottom_y);
-
-                            // Scale the elevation height proportionally from the center's baseline
-                            let current_distance = radius;
-                            let dynamic_top_y = square_center.y - current_distance;
-
-                            // Construct the updated top_intersect point
-                            let top_intersect = Point::new(bottom_intersect.x, dynamic_top_y);
-
-                            // --- DRAW SQUARES AROUND THE CIRCLES ---
-                            // Calculate the extreme coordinates for a box of size radius * 2 centered at square_center
-                            let box_left = square_center.x - radius;
-                            let box_right = square_center.x + radius;
-                            let box_top = square_center.y - radius;
-                            let box_bottom = square_center.y + radius;
-
-                            // Draw Top Edge
-                            scene.stroke(
-                                &stroke_cyan,
-                                Affine::IDENTITY,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_top),
-                                    Point::new(box_right, box_top),
-                                ),
-                            );
-                            // Draw Bottom Edge
-                            scene.stroke(
-                                &stroke_cyan,
-                                Affine::IDENTITY,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_bottom),
-                                    Point::new(box_right, box_bottom),
-                                ),
-                            );
-                            // Draw Left Edge
-                            scene.stroke(
-                                &stroke_cyan,
-                                Affine::IDENTITY,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_top),
-                                    Point::new(box_left, box_bottom),
-                                ),
-                            );
-                            // Draw Right Edge
-                            scene.stroke(
-                                &stroke_cyan,
-                                Affine::IDENTITY,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_right, box_top),
-                                    Point::new(box_right, box_bottom),
-                                ),
-                            );
-                            // ---------------------------------------
-
-                            // Feed the new expanding intersection back to top_right for the next loop pass
-                            top_right = top_intersect;
-                        }
-                    }
-                    // =====================================================
                     // OUTER RING
                     // =====================================================
                     let outer_radius = 560.0;
@@ -703,6 +604,114 @@ async fn run() {
                             None,
                             &sun_path,
                         );
+                    }
+                    // =====================================================
+                    // CYAN ROLLING GEOMETRIC SEQUENCE (CENTER ANCHORED + ROTATED)
+                    // =====================================================
+                    if let Some(&(1, first_x, first_y)) =
+                        grid_points.iter().find(|(val, _, _)| *val == 1)
+                    {
+                        let stroke_cyan = Stroke::new(0.75);
+                        let brush_cyan = Color::rgb8(0, 255, 255);
+
+                        // 1. Establish the geometry of the first box exactly as you had it
+                        let p1_center_x = center_x + (first_x as f64 * scale);
+                        let p1_center_y = center_y - (first_y as f64 * scale);
+
+                        let top_y = p1_center_y - scale / 2.0;
+                        let bottom_y = p1_center_y + scale / 2.0;
+                        let right_x = p1_center_x + scale / 2.0;
+
+                        let square_center = Point::new(p1_center_x, p1_center_y);
+                        let mut top_right = Point::new(right_x, top_y);
+
+                        // 2. Calculate the exact angle to Octave North
+                        let seconds_in_day =
+                            (current_hour * 3600.0) + (current_minute * 60.0) + current_second;
+                        let day_fraction = seconds_in_day / 86400.0;
+                        let precise_today_angle = NaturalSquaresEngine::day_of_year_to_angle(
+                            today_day_of_year as f32 + day_fraction as f32,
+                            true,
+                        ) as f64;
+                        let octave_rotation = precise_today_angle - 45.0;
+                        let north_angle_rad =
+                            ((2.0 * (360.0 / 8.0)) + octave_rotation).to_radians();
+
+                        // 3. Create a rotation matrix centered on your screen center
+                        let rotation_transform = Affine::translate((center.x, center.y))
+                            * Affine::rotate(-north_angle_rad)
+                            * Affine::translate((-center.x, -center.y));
+
+                        for _iteration in 0..9 {
+                            let diagonal_distance = top_right.distance(square_center);
+                            let radius = diagonal_distance;
+
+                            //let circle = Circle::new(square_center, radius);
+                            // Pass the rotation matrix here instead of Affine::IDENTITY
+                            /*
+                            scene.stroke(
+                                &stroke_cyan,
+                                rotation_transform,
+                                brush_cyan,
+                                None,
+                                &circle,
+                            );
+                            */
+
+                            let bottom_intersect = Point::new(square_center.x + radius, bottom_y);
+                            let current_distance = radius;
+                            let dynamic_top_y = square_center.y - current_distance;
+                            let top_intersect = Point::new(bottom_intersect.x, dynamic_top_y);
+
+                            let box_left = square_center.x - radius;
+                            let box_right = square_center.x + radius;
+                            let box_top = square_center.y - radius;
+                            let box_bottom = square_center.y + radius;
+
+                            // Pass the rotation matrix to all lines as well
+                            scene.stroke(
+                                &stroke_cyan,
+                                rotation_transform,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_left, box_top),
+                                    Point::new(box_right, box_top),
+                                ),
+                            );
+                            scene.stroke(
+                                &stroke_cyan,
+                                rotation_transform,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_left, box_bottom),
+                                    Point::new(box_right, box_bottom),
+                                ),
+                            );
+                            scene.stroke(
+                                &stroke_cyan,
+                                rotation_transform,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_left, box_top),
+                                    Point::new(box_left, box_bottom),
+                                ),
+                            );
+                            scene.stroke(
+                                &stroke_cyan,
+                                rotation_transform,
+                                brush_cyan,
+                                None,
+                                &Line::new(
+                                    Point::new(box_right, box_top),
+                                    Point::new(box_right, box_bottom),
+                                ),
+                            );
+
+                            top_right = top_intersect;
+                        }
                     }
                     // =====================================================
                     // MOONLIGHT CONE (Aligned to your exact Solar Pipeline)
