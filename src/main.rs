@@ -607,15 +607,16 @@ async fn run() {
                         );
                     }
                     // =====================================================
-                    // CYAN ROLLING GEOMETRIC SEQUENCE (CENTER ANCHORED + ROTATED)
+                    // CYAN ROLLING GEOMETRIC SEQUENCE (LINEAR PERIMETER-MAPPED SPIRAL BAND)
                     // =====================================================
                     if let Some(&(1, first_x, first_y)) =
                         grid_points.iter().find(|(val, _, _)| *val == 1)
                     {
                         let stroke_cyan = Stroke::new(0.75);
                         let brush_cyan = Color::rgb8(0, 255, 255);
+                        let fill_cyan = Color::rgba8(0, 255, 255, 60); // Translucent band fill
 
-                        // 1. Establish the geometry of the first box exactly as you had it
+                        // 1. Establish the geometry of the core center anchor
                         let p1_center_x = center_x + (first_x as f64 * scale);
                         let p1_center_y = center_y - (first_y as f64 * scale);
 
@@ -626,7 +627,7 @@ async fn run() {
                         let square_center = Point::new(p1_center_x, p1_center_y);
                         let mut top_right = Point::new(right_x, top_y);
 
-                        // 2. Calculate the exact angle to Octave North
+                        // 2. Calculate astronomy rotation transform
                         let seconds_in_day =
                             (current_hour * 3600.0) + (current_minute * 60.0) + current_second;
                         let day_fraction = seconds_in_day / 86400.0;
@@ -638,82 +639,182 @@ async fn run() {
                         let north_angle_rad =
                             ((2.0 * (360.0 / 8.0)) + octave_rotation).to_radians();
 
-                        // 3. Create a rotation matrix centered on your screen center
                         let rotation_transform = Affine::translate((center.x, center.y))
                             * Affine::rotate(-north_angle_rad)
                             * Affine::translate((-center.x, -center.y));
 
-                        for _iteration in 0..9 {
+                        // 3. Define the Time Window Width (1.0 Hour rolling band)
+                        let band_hour_width = 1.0;
+
+                        // Convert global time to cascade track progress (0.0 to 9.0)
+                        let current_cascade_head = day_fraction * 9.0;
+                        let cascade_span_width = (band_hour_width / 24.0) * 9.0;
+                        let current_cascade_tail =
+                            (current_cascade_head - cascade_span_width).max(0.0);
+
+                        // Helper closure to map a factor (0.0 to 1.0) directly along a square's 4 sides linearly
+                        // Starting at East (middle of right edge) and moving counter-clockwise
+                        let sample_square_perimeter =
+                            |cx: f64, cy: f64, r: f64, factor: f64| -> Point {
+                                let f = factor.rem_euclid(1.0);
+                                if f < 0.125 {
+                                    // Right wall, moving up to top-right corner
+                                    let segment_f = f / 0.125;
+                                    Point::new(cx + r, cy - (segment_f * r * 0.5))
+                                } else if f < 0.375 {
+                                    // Top wall, moving right-to-left
+                                    let segment_f = (f - 0.125) / 0.25;
+                                    Point::new(cx + r - (segment_f * r * 2.0), cy - r)
+                                } else if f < 0.625 {
+                                    // Left wall, moving top-to-bottom
+                                    let segment_f = (f - 0.375) / 0.25;
+                                    Point::new(cx - r, cy - r + (segment_f * r * 2.0))
+                                } else if f < 0.875 {
+                                    // Bottom wall, moving left-to-right
+                                    let segment_f = (f - 0.625) / 0.25;
+                                    Point::new(cx - r + (segment_f * r * 2.0), cy + r)
+                                } else {
+                                    // Right wall, moving up from bottom-right to start
+                                    let segment_f = (f - 0.875) / 0.125;
+                                    Point::new(cx + r, cy + r - (segment_f * r * 0.5))
+                                }
+                            };
+
+                        let mut last_outer_radius = 0.0;
+
+                        for iteration in 0..9 {
                             let diagonal_distance = top_right.distance(square_center);
-                            let radius = diagonal_distance;
+                            let outer_radius = diagonal_distance;
+                            let inner_radius = last_outer_radius;
 
-                            //let circle = Circle::new(square_center, radius);
-                            // Pass the rotation matrix here instead of Affine::IDENTITY
-                            /*
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &circle,
-                            );
-                            */
+                            let out_left = square_center.x - outer_radius;
+                            let out_right = square_center.x + outer_radius;
+                            let out_top = square_center.y - outer_radius;
+                            let out_bottom = square_center.y + outer_radius;
 
-                            let bottom_intersect = Point::new(square_center.x + radius, bottom_y);
-                            let current_distance = radius;
-                            let dynamic_top_y = square_center.y - current_distance;
+                            // Isolate tracking windows for this layer
+                            let iter_f64 = iteration as f64;
+                            let fill_start =
+                                current_cascade_tail.clamp(iter_f64, iter_f64 + 1.0) - iter_f64;
+                            let fill_end =
+                                current_cascade_head.clamp(iter_f64, iter_f64 + 1.0) - iter_f64;
+                            let fill_factor = fill_end - fill_start;
+
+                            if fill_factor > 0.0 {
+                                let mut spiral_segment = BezPath::new();
+                                let steps = 40;
+
+                                if iteration == 0 {
+                                    // Inmost square core anchor
+                                    spiral_segment.move_to(square_center);
+                                    for s in 0..=steps {
+                                        let step_f =
+                                            fill_start + ((s as f64 / steps as f64) * fill_factor);
+                                        let pt = sample_square_perimeter(
+                                            square_center.x,
+                                            square_center.y,
+                                            outer_radius,
+                                            step_f,
+                                        );
+                                        spiral_segment.line_to(pt);
+                                    }
+                                } else {
+                                    // Bounded Ribbon: Trace forward along the inner square's perimeter walls
+                                    let inner_start = sample_square_perimeter(
+                                        square_center.x,
+                                        square_center.y,
+                                        inner_radius,
+                                        fill_start,
+                                    );
+                                    spiral_segment.move_to(inner_start);
+
+                                    for s in 0..=steps {
+                                        let step_f =
+                                            fill_start + ((s as f64 / steps as f64) * fill_factor);
+                                        let pt = sample_square_perimeter(
+                                            square_center.x,
+                                            square_center.y,
+                                            inner_radius,
+                                            step_f,
+                                        );
+                                        spiral_segment.line_to(pt);
+                                    }
+
+                                    // Bridge straight outward to the outer ring wall edge at the current timestamp
+                                    let outer_end = sample_square_perimeter(
+                                        square_center.x,
+                                        square_center.y,
+                                        outer_radius,
+                                        fill_end,
+                                    );
+                                    spiral_segment.line_to(outer_end);
+
+                                    // Trace backward along the outer square's perimeter walls
+                                    for s in (0..=steps).rev() {
+                                        let step_f =
+                                            fill_start + ((s as f64 / steps as f64) * fill_factor);
+                                        let pt = sample_square_perimeter(
+                                            square_center.x,
+                                            square_center.y,
+                                            outer_radius,
+                                            step_f,
+                                        );
+                                        spiral_segment.line_to(pt);
+                                    }
+                                }
+
+                                spiral_segment.close_path();
+
+                                scene.fill(
+                                    vello::peniko::Fill::NonZero,
+                                    rotation_transform,
+                                    fill_cyan,
+                                    None,
+                                    &spiral_segment,
+                                );
+                            }
+
+                            // --- DRAW WIREFRAME PERIMETERS ---
+                            let lines = [
+                                Line::new(
+                                    Point::new(out_left, out_top),
+                                    Point::new(out_right, out_top),
+                                ),
+                                Line::new(
+                                    Point::new(out_left, out_bottom),
+                                    Point::new(out_right, out_bottom),
+                                ),
+                                Line::new(
+                                    Point::new(out_left, out_top),
+                                    Point::new(out_left, out_bottom),
+                                ),
+                                Line::new(
+                                    Point::new(out_right, out_top),
+                                    Point::new(out_right, out_bottom),
+                                ),
+                            ];
+
+                            for line in &lines {
+                                scene.stroke(
+                                    &stroke_cyan,
+                                    rotation_transform,
+                                    brush_cyan,
+                                    None,
+                                    line,
+                                );
+                            }
+
+                            last_outer_radius = outer_radius;
+
+                            // Advance matrix calculation sizes for the next layer
+                            let bottom_intersect =
+                                Point::new(square_center.x + outer_radius, bottom_y);
+                            let dynamic_top_y = square_center.y - outer_radius;
                             let top_intersect = Point::new(bottom_intersect.x, dynamic_top_y);
-
-                            let box_left = square_center.x - radius;
-                            let box_right = square_center.x + radius;
-                            let box_top = square_center.y - radius;
-                            let box_bottom = square_center.y + radius;
-
-                            // Pass the rotation matrix to all lines as well
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_top),
-                                    Point::new(box_right, box_top),
-                                ),
-                            );
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_bottom),
-                                    Point::new(box_right, box_bottom),
-                                ),
-                            );
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_top),
-                                    Point::new(box_left, box_bottom),
-                                ),
-                            );
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_right, box_top),
-                                    Point::new(box_right, box_bottom),
-                                ),
-                            );
-
                             top_right = top_intersect;
                         }
                     }
+
                     // =====================================================
                     // MOONLIGHT CONE (Aligned to your exact Solar Pipeline)
                     // =====================================================
@@ -998,27 +1099,27 @@ async fn run() {
 
                         let mut p = BezPath::new();
                         add_polygon(&mut p, &neptune_verts);
-                        scene.fill(Fill::NonZero, Affine::IDENTITY, neptune_color, None, &p);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, neptune_color, None, &p);
 
                         let mut p = BezPath::new();
                         add_polygon(&mut p, &uranus_verts);
-                        scene.fill(Fill::NonZero, Affine::IDENTITY, uranus_color, None, &p);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, uranus_color, None, &p);
 
                         let mut p = BezPath::new();
                         add_polygon(&mut p, &saturn_verts);
-                        scene.fill(Fill::NonZero, Affine::IDENTITY, saturn_color, None, &p);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, saturn_color, None, &p);
 
                         let mut p = BezPath::new();
                         add_polygon(&mut p, &jupiter_verts);
-                        scene.fill(Fill::NonZero, Affine::IDENTITY, jupiter_color, None, &p);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, jupiter_color, None, &p);
 
                         let mut p = BezPath::new();
                         add_polygon(&mut p, &venus_verts);
-                        scene.fill(Fill::NonZero, Affine::IDENTITY, venus_color, None, &p);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, venus_color, None, &p);
 
                         let mut p = BezPath::new();
                         add_polygon(&mut p, &mercury_verts);
-                        scene.fill(Fill::NonZero, Affine::IDENTITY, mercury_color, None, &p);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, mercury_color, None, &p);
 
                         // ==========================================
                         // SINGLE CONTINUOUS SPIRAL (START AT SUN)
