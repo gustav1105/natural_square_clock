@@ -2,7 +2,7 @@ use scz::{NaturalSquaresEngine, SpiralIterator};
 use skrifa::{FontRef, MetadataProvider};
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, Stroke};
-use vello::peniko::Color;
+use vello::peniko::{Color, Fill};
 use vello::util::RenderContext;
 use vello::{AaConfig, Glyph, Renderer, RendererOptions, Scene};
 use winit::{
@@ -886,404 +886,231 @@ async fn run() {
                             .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
                     }
 
+                    // ==========================================
+                    // HELPERS
+                    // ==========================================
+
+                    fn polygon_vertices(
+                        center: Point,
+                        radius: f64,
+                        sides: usize,
+                        rotation_deg: f64,
+                    ) -> Vec<Point> {
+                        (0..sides)
+                            .map(|i| {
+                                let angle = rotation_deg + (i as f64 * (360.0 / sides as f64));
+                                point_on_circle(center, radius, angle)
+                            })
+                            .collect()
+                    }
+
+                    fn add_polygon(path: &mut BezPath, verts: &[Point]) {
+                        if verts.is_empty() {
+                            return;
+                        }
+
+                        path.move_to(verts[0]);
+
+                        for v in &verts[1..] {
+                            path.line_to(*v);
+                        }
+
+                        path.close_path();
+                    }
+
+                    // walks polygon edges counter-clockwise
+                    fn spiral_walk(path: &mut BezPath, verts: &[Point], start_idx: usize) {
+                        let len = verts.len();
+
+                        for i in 1..=len {
+                            let idx = (start_idx + i) % len;
+                            path.line_to(verts[idx]);
+                        }
+                    }
+
                     if let Some(neptune) = planetary_positions.iter().find(|p| p.name == "Neptune")
                     {
-                        // Cascading Chakra colors from Purple (Crown/Third Eye) down to Red (Root)
-                        let neptune_color = Color::rgba8(148, 12, 211, 56); // Deep Violet / Crown Chakra
-                        let uranus_color = Color::rgba8(36, 56, 130, 56); // Indigo / Third Eye Chakra
-                        let saturn_color = Color::rgba8(0, 191, 255, 56); // Light Blue / Throat Chakra
-                        let jupiter_color = Color::rgba8(50, 205, 50, 56); // Vibrant Green / Heart Chakra
-                        let venus_color = Color::rgba8(255, 215, 0, 56); // Golden Yellow / Solar Plexus Chakra
-                        let mercury_color = Color::rgba8(255, 69, 0, 56); // Red-Orange to Deep Red / Sacral & Root
+                        let neptune_color = Color::rgba8(148, 12, 211, 28);
+                        let uranus_color = Color::rgba8(36, 56, 130, 28);
+                        let saturn_color = Color::rgba8(0, 191, 255, 28);
+                        let jupiter_color = Color::rgba8(50, 205, 50, 28);
+                        let venus_color = Color::rgba8(255, 215, 0, 28);
+                        let mercury_color = Color::rgba8(255, 69, 0, 28);
+
                         // ==========================================
-                        // 1. NEPTUNE (9-Sided Nonagon) - FILLED
+                        // RADII
                         // ==========================================
+
                         let neptune_radius = inner_gray_radius;
-                        let neptune_pos = point_on_circle(center, neptune_radius, neptune.angle);
 
-                        let mut neptune_path = BezPath::new();
-                        neptune_path.move_to(neptune_pos);
-                        for i in 1..=9 {
-                            let next_angle = neptune.angle + (i as f64 * 40.0);
-                            let next_pt = point_on_circle(center, neptune_radius, next_angle);
-                            neptune_path.line_to(next_pt);
-                        }
-                        neptune_path.close_path();
+                        let uranus_radius = neptune_radius * (20.0_f64).to_radians().cos();
 
-                        // Changed to fill
-                        scene.fill(
-                            vello::peniko::Fill::NonZero,
-                            Affine::IDENTITY,
-                            neptune_color,
-                            None,
-                            &neptune_path,
-                        );
+                        let saturn_radius = uranus_radius * (22.5_f64).to_radians().cos();
+
+                        let jupiter_radius = saturn_radius * (30.0_f64).to_radians().cos();
+
+                        let venus_radius = jupiter_radius * (36.0_f64).to_radians().cos();
+
+                        let mercury_radius = venus_radius * (45.0_f64).to_radians().cos();
 
                         // ==========================================
-                        // 2. URANUS TRACK (Circle inside Neptune) - LINE
+                        // VERTICES
                         // ==========================================
-                        let uranus_circle_radius =
-                            neptune_radius * (20.0 as f64).to_radians().cos();
 
-                        let uranus_circle = vello::kurbo::Circle::new(center, uranus_circle_radius);
+                        let neptune_verts =
+                            polygon_vertices(center, neptune_radius, 9, neptune.angle);
+
+                        let uranus = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Uranus")
+                            .unwrap();
+                        let uranus_verts = polygon_vertices(center, uranus_radius, 8, uranus.angle);
+
+                        let saturn = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Saturn")
+                            .unwrap();
+                        let saturn_verts = polygon_vertices(center, saturn_radius, 6, saturn.angle);
+
+                        let jupiter = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Jupiter")
+                            .unwrap();
+                        let jupiter_verts =
+                            polygon_vertices(center, jupiter_radius, 5, jupiter.angle);
+
+                        let venus = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Venus")
+                            .unwrap();
+                        let venus_verts = polygon_vertices(center, venus_radius, 4, venus.angle);
+
+                        let mercury = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Mercury")
+                            .unwrap();
+                        let mercury_verts =
+                            polygon_vertices(center, mercury_radius, 3, mercury.angle);
 
                         // ==========================================
-                        // 3. URANUS (8-Sided Octagon) - FILLED
+                        // FILLED PLANETS
                         // ==========================================
-                        if let Some(uranus) =
-                            planetary_positions.iter().find(|p| p.name == "Uranus")
-                        {
-                            let uranus_pos =
-                                point_on_circle(center, uranus_circle_radius, uranus.angle);
 
-                            let mut uranus_path = BezPath::new();
-                            uranus_path.move_to(uranus_pos);
-                            for i in 1..=8 {
-                                let next_angle = uranus.angle + (i as f64 * 45.0);
-                                let next_pt =
-                                    point_on_circle(center, uranus_circle_radius, next_angle);
-                                uranus_path.line_to(next_pt);
-                            }
-                            uranus_path.close_path();
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &neptune_verts);
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, neptune_color, None, &p);
 
-                            // Changed to fill
-                            scene.fill(
-                                vello::peniko::Fill::NonZero,
-                                Affine::IDENTITY,
-                                uranus_color,
-                                None,
-                                &uranus_path,
-                            );
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &uranus_verts);
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, uranus_color, None, &p);
 
-                            // ==========================================
-                            // 4. SATURN TRACK (Circle inside Uranus) - LINE
-                            // ==========================================
-                            let saturn_circle_radius =
-                                uranus_circle_radius * (22.5 as f64).to_radians().cos();
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &saturn_verts);
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, saturn_color, None, &p);
 
-                            let saturn_circle =
-                                vello::kurbo::Circle::new(center, saturn_circle_radius);
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &jupiter_verts);
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, jupiter_color, None, &p);
 
-                            // ==========================================
-                            // 5. SATURN (6-Sided Hexagon) - FILLED
-                            // ==========================================
-                            if let Some(saturn) =
-                                planetary_positions.iter().find(|p| p.name == "Saturn")
-                            {
-                                let saturn_pos =
-                                    point_on_circle(center, saturn_circle_radius, saturn.angle);
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &venus_verts);
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, venus_color, None, &p);
 
-                                let mut saturn_path = BezPath::new();
-                                saturn_path.move_to(saturn_pos);
-                                for i in 1..=6 {
-                                    let next_angle = saturn.angle + (i as f64 * 60.0);
-                                    let next_pt =
-                                        point_on_circle(center, saturn_circle_radius, next_angle);
-                                    saturn_path.line_to(next_pt);
-                                }
-                                saturn_path.close_path();
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &mercury_verts);
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, mercury_color, None, &p);
 
-                                // Changed to fill
-                                scene.fill(
-                                    vello::peniko::Fill::NonZero,
-                                    Affine::IDENTITY,
-                                    saturn_color,
-                                    None,
-                                    &saturn_path,
-                                );
+                        // ==========================================
+                        // SINGLE CONTINUOUS SPIRAL (START AT SUN)
+                        // ==========================================
 
-                                // ==========================================
-                                // 6. JUPITER TRACK (Circle inside Saturn) - LINE
-                                // ==========================================
-                                let jupiter_circle_radius =
-                                    saturn_circle_radius * (30.0 as f64).to_radians().cos();
+                        let mut spiral = BezPath::new();
 
-                                let jupiter_circle =
-                                    vello::kurbo::Circle::new(center, jupiter_circle_radius);
+                        // 1. Find the Sun's position to use as our target angle
+                        let sun_angle = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Sun")
+                            .map(|p| p.angle)
+                            .unwrap_or(0.0); // Fallback to 0.0 if "Sun" isn't found
 
-                                // ==========================================
-                                // 7. JUPITER (5-Sided Pentagon) - FILLED
-                                // ==========================================
-                                if let Some(jupiter) =
-                                    planetary_positions.iter().find(|p| p.name == "Jupiter")
-                                {
-                                    let jupiter_pos = point_on_circle(
-                                        center,
-                                        jupiter_circle_radius,
-                                        jupiter.angle,
-                                    );
+                        // 2. Find which Neptune vertex is closest to the Sun's alignment
+                        let mut current_idx = neptune_verts
+                            .iter()
+                            .enumerate()
+                            .min_by(|(_, a), (_, b)| {
+                                // Calculate 2D position of the Sun's vector direction at Neptune's radius
+                                let sun_target_pos =
+                                    point_on_circle(center, neptune_radius, sun_angle);
 
-                                    let mut jupiter_path = BezPath::new();
-                                    jupiter_path.move_to(jupiter_pos);
-                                    for i in 1..=5 {
-                                        let next_angle = jupiter.angle + (i as f64 * 72.0);
-                                        let next_pt = point_on_circle(
-                                            center,
-                                            jupiter_circle_radius,
-                                            next_angle,
-                                        );
-                                        jupiter_path.line_to(next_pt);
-                                    }
-                                    jupiter_path.close_path();
+                                let dist_a = (a.x - sun_target_pos.x).hypot(a.y - sun_target_pos.y);
+                                let dist_b = (b.x - sun_target_pos.x).hypot(b.y - sun_target_pos.y);
+                                dist_a
+                                    .partial_cmp(&dist_b)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
 
-                                    // Changed to fill
-                                    scene.fill(
-                                        vello::peniko::Fill::NonZero,
-                                        Affine::IDENTITY,
-                                        jupiter_color,
-                                        None,
-                                        &jupiter_path,
-                                    );
+                        // 3. Start the spiral from this new starting point
+                        spiral.move_to(neptune_verts[current_idx]);
+                        spiral_walk(&mut spiral, &neptune_verts, current_idx);
 
-                                    // ==========================================
-                                    // 8. VENUS TRACK (Circle inside Jupiter) - LINE
-                                    // ==========================================
-                                    let venus_circle_radius =
-                                        jupiter_circle_radius * (36.0 as f64).to_radians().cos();
+                        // Helper to find closest next vertex (Keep this exactly as it is)
+                        let find_closest_idx = |current_pos: Point,
+                                                next_verts: &[Point]|
+                         -> usize {
+                            next_verts
+                                .iter()
+                                .enumerate()
+                                .min_by(|(_, a), (_, b)| {
+                                    let dist_a = (a.x - current_pos.x).hypot(a.y - current_pos.y);
+                                    let dist_b = (b.x - current_pos.x).hypot(b.y - current_pos.y);
+                                    dist_a
+                                        .partial_cmp(&dist_b)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                                .map(|(i, _)| i)
+                                .unwrap_or(0)
+                        };
 
-                                    let venus_circle =
-                                        vello::kurbo::Circle::new(center, venus_circle_radius);
+                        // --- BRIDGE TO URANUS ---
+                        let last_pos = neptune_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &uranus_verts);
+                        spiral.line_to(uranus_verts[current_idx]);
+                        spiral_walk(&mut spiral, &uranus_verts, current_idx);
 
-                                    // ==========================================
-                                    // 9. VENUS (4-Sided Square) - FILLED
-                                    // ==========================================
-                                    if let Some(venus) =
-                                        planetary_positions.iter().find(|p| p.name == "Venus")
-                                    {
-                                        let venus_pos = point_on_circle(
-                                            center,
-                                            venus_circle_radius,
-                                            venus.angle,
-                                        );
+                        // --- BRIDGE TO SATURN ---
+                        let last_pos = uranus_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &saturn_verts);
+                        spiral.line_to(saturn_verts[current_idx]);
+                        spiral_walk(&mut spiral, &saturn_verts, current_idx);
 
-                                        let mut venus_path = BezPath::new();
-                                        venus_path.move_to(venus_pos);
-                                        for i in 1..=4 {
-                                            let next_angle = venus.angle + (i as f64 * 90.0);
-                                            let next_pt = point_on_circle(
-                                                center,
-                                                venus_circle_radius,
-                                                next_angle,
-                                            );
-                                            venus_path.line_to(next_pt);
-                                        }
-                                        venus_path.close_path();
+                        // --- BRIDGE TO JUPITER ---
+                        let last_pos = saturn_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &jupiter_verts);
+                        spiral.line_to(jupiter_verts[current_idx]);
+                        spiral_walk(&mut spiral, &jupiter_verts, current_idx);
 
-                                        // Changed to fill
-                                        scene.fill(
-                                            vello::peniko::Fill::NonZero,
-                                            Affine::IDENTITY,
-                                            venus_color,
-                                            None,
-                                            &venus_path,
-                                        );
+                        // --- BRIDGE TO VENUS ---
+                        let last_pos = jupiter_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &venus_verts);
+                        spiral.line_to(venus_verts[current_idx]);
+                        spiral_walk(&mut spiral, &venus_verts, current_idx);
 
-                                        // ==========================================
-                                        // 10. MERCURY TRACK (Circle inside Venus) - LINE
-                                        // ==========================================
-                                        let mercury_circle_radius =
-                                            venus_circle_radius * (45.0 as f64).to_radians().cos();
+                        // --- BRIDGE TO MERCURY ---
+                        let last_pos = venus_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &mercury_verts);
+                        spiral.line_to(mercury_verts[current_idx]);
+                        spiral_walk(&mut spiral, &mercury_verts, current_idx);
 
-                                        let mercury_circle = vello::kurbo::Circle::new(
-                                            center,
-                                            mercury_circle_radius,
-                                        );
-
-                                        // ==========================================
-                                        // 11. MERCURY (3-Sided Triangle) - FILLED
-                                        // ==========================================
-                                        if let Some(mercury) =
-                                            planetary_positions.iter().find(|p| p.name == "Mercury")
-                                        {
-                                            let mercury_pos = point_on_circle(
-                                                center,
-                                                mercury_circle_radius,
-                                                mercury.angle,
-                                            );
-
-                                            let mut mercury_path = BezPath::new();
-                                            mercury_path.move_to(mercury_pos);
-                                            for i in 1..=3 {
-                                                let next_angle = mercury.angle + (i as f64 * 120.0);
-                                                let next_pt = point_on_circle(
-                                                    center,
-                                                    mercury_circle_radius,
-                                                    next_angle,
-                                                );
-                                                mercury_path.line_to(next_pt);
-                                            }
-                                            mercury_path.close_path();
-
-                                            // Changed to fill
-                                            scene.fill(
-                                                vello::peniko::Fill::NonZero,
-                                                Affine::IDENTITY,
-                                                mercury_color,
-                                                None,
-                                                &mercury_path,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    /*
-                    // =====================================================
-                    // 6. SATURN 30-DEGREE SEGMENTS WITH HEAVY BLACK WASH
-                    // =====================================================
-                    if let Some(saturn) = planetary_positions.iter().find(|p| p.name == "Saturn") {
-                        // Start at Saturn's exact position
-                        let saturn_pos = point_on_circle(center, inner_gray_radius, saturn.angle);
-
-                        let mut flat_path = BezPath::new();
-                        flat_path.move_to(saturn_pos);
-
-                        // Walk counter-clockwise step-by-step using flat, straight lines
-                        for i in 1..=12 {
-                            let next_angle = saturn.angle + (i as f64 * 30.0);
-                            let next_pt = point_on_circle(center, inner_gray_radius, next_angle);
-
-                            // Explicitly draw a sharp, straight line to the next point
-                            flat_path.line_to(next_pt);
-                        }
-                        flat_path.close_path();
-
-                        // Draw the crisp silver lines for each straight segment
-                        let silver_color = Color::rgb8(192, 198, 206).with_alpha_factor(0.8);
                         scene.stroke(
-                            &Stroke::new(1.5),
+                            &Stroke::new(1.0),
                             Affine::IDENTITY,
-                            silver_color,
+                            Color::rgb8(0, 255, 255),
                             None,
-                            &flat_path,
+                            &spiral,
                         );
                     }
-                    // =====================================================
-                    // 7. JUPITER 60-DEGREE SEGMENTS WITH HIGHLY TRANSPARENT WASH
-                    // =====================================================
-                    if let Some(jupiter) = planetary_positions.iter().find(|p| p.name == "Jupiter")
-                    {
-                        // Start at Jupiter's exact position
-                        let jupiter_pos = point_on_circle(center, inner_gray_radius, jupiter.angle);
-
-                        let mut jupiter_path = BezPath::new();
-                        jupiter_path.move_to(jupiter_pos);
-
-                        // Walk counter-clockwise in 6 steps of 60 degrees (360 / 60 = 6 segments)
-                        for i in 1..=6 {
-                            let next_angle = jupiter.angle + (i as f64 * 60.0);
-                            let next_pt = point_on_circle(center, inner_gray_radius, next_angle);
-
-                            // Draw a sharp, straight line to the next 60-degree point
-                            jupiter_path.line_to(next_pt);
-                        }
-                        jupiter_path.close_path();
-
-                        // Lowered alpha from 185 to 100 so the amber-gold lines look like delicate filaments
-                        let amber_gold_color = Color::rgba8(235, 155, 45, 100);
-                        scene.stroke(
-                            &Stroke::new(1.5),
-                            Affine::IDENTITY,
-                            amber_gold_color,
-                            None,
-                            &jupiter_path,
-                        );
-                    }
-
-                    // =====================================================
-                    // 8. MARS 72-DEGREE SEGMENTS WITH TRANSLUCENT RUST WASH
-                    // =====================================================
-                    if let Some(mars) = planetary_positions.iter().find(|p| p.name == "Mars") {
-                        // Start at Mars's exact position
-                        let mars_pos = point_on_circle(center, inner_gray_radius, mars.angle);
-
-                        let mut mars_path = BezPath::new();
-                        mars_path.move_to(mars_pos);
-
-                        // Walk counter-clockwise in 5 steps of 72 degrees (360 / 72 = 5 segments)
-                        for i in 1..=5 {
-                            let next_angle = mars.angle + (i as f64 * 72.0);
-                            let next_pt = point_on_circle(center, inner_gray_radius, next_angle);
-
-                            // Draw a sharp, straight line to the next 72-degree point
-                            mars_path.line_to(next_pt);
-                        }
-                        mars_path.close_path();
-
-                        // Crimson-iron lines styled like delicate geometric filaments
-                        let iron_crimson_color = Color::rgba8(210, 70, 50, 130);
-                        scene.stroke(
-                            &Stroke::new(1.5),
-                            Affine::IDENTITY,
-                            iron_crimson_color,
-                            None,
-                            &mars_path,
-                        );
-                    }
-                    // =====================================================
-                    // 8. VENUS 90-DEGREE SEGMENTS WITH RADIANT YELLOW WASH
-                    // =====================================================
-                    if let Some(venus) = planetary_positions.iter().find(|p| p.name == "Venus") {
-                        // Start at Venus's exact position
-                        let venus_pos = point_on_circle(center, inner_gray_radius, venus.angle);
-
-                        let mut venus_path = BezPath::new();
-                        venus_path.move_to(venus_pos);
-
-                        // Walk counter-clockwise in 4 steps of 90 degrees (360 / 90 = 4 segments)
-                        for i in 1..=4 {
-                            let next_angle = venus.angle + (i as f64 * 90.0);
-                            let next_pt = point_on_circle(center, inner_gray_radius, next_angle);
-
-                            // Draw a sharp, straight line to the next 90-degree point
-                            venus_path.line_to(next_pt);
-                        }
-                        venus_path.close_path();
-
-                        // A brighter, delicate pale amber line to give it a fine filament glow
-                        let pale_amber_glow = Color::rgba8(245, 230, 110, 120);
-                        scene.stroke(
-                            &Stroke::new(1.5),
-                            Affine::IDENTITY,
-                            pale_amber_glow,
-                            None,
-                            &venus_path,
-                        );
-                    }
-
-                    // =====================================================
-                    // 8. MERCURY 120-DEGREE SEGMENTS WITH QUICKSILVER WASH
-                    // =====================================================
-                    if let Some(mercury) = planetary_positions.iter().find(|p| p.name == "Mercury")
-                    {
-                        // Start at Mercury's exact position
-                        let mercury_pos = point_on_circle(center, inner_gray_radius, mercury.angle);
-
-                        let mut mercury_path = BezPath::new();
-                        mercury_path.move_to(mercury_pos);
-
-                        // Walk counter-clockwise in 3 steps of 120 degrees (360 / 120 = 3 segments)
-                        for i in 1..=3 {
-                            let next_angle = mercury.angle + (i as f64 * 120.0);
-                            let next_pt = point_on_circle(center, inner_gray_radius, next_angle);
-
-                            // Draw a sharp, straight line to the next 120-degree point
-                            mercury_path.line_to(next_pt);
-                        }
-                        mercury_path.close_path();
-
-                        // Bright, crisp metallic silver for the delicate geometric frame
-                        let swift_silver_line = Color::rgba8(225, 232, 240, 140);
-                        scene.stroke(
-                            &Stroke::new(1.5),
-                            Affine::IDENTITY,
-                            swift_silver_line,
-                            None,
-                            &mercury_path,
-                        );
-                    }
-                    */
                     // =====================================================
                     // RENDER
                     // =====================================================
