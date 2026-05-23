@@ -85,6 +85,12 @@ impl NaturalSquaresEngine {
             })
             .collect()
     }
+
+    /// Returns the current day count of the year (e.g., Jan 1st = 1, May 23rd = 143)
+    pub fn get_current_day_count(utc: DateTime<Utc>) -> u32 {
+        // .ordinal() natively returns a 1-based day-of-year integer (1 to 366)
+        utc.ordinal()
+    }
     /// Computes the Moon's zodiac angle and illumination fraction using high-precision J2000 epoch baselines.
     pub fn calculate_moon_state(utc: chrono::DateTime<chrono::Utc>) -> MoonState {
         use chrono::Datelike;

@@ -2,7 +2,7 @@ use scz::{NaturalSquaresEngine, SpiralIterator};
 use skrifa::{FontRef, MetadataProvider};
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, Stroke};
-use vello::peniko::Color;
+use vello::peniko::{Color, Fill};
 use vello::util::RenderContext;
 use vello::{AaConfig, Glyph, Renderer, RendererOptions, Scene};
 use winit::{
@@ -532,6 +532,7 @@ async fn run() {
                     let latitude = -26.2041;
 
                     let is_day = NaturalSquaresEngine::is_daylight(utc_now, longitude, latitude);
+
                     // =====================================================
                     // SUNLIGHT CONE (FROM dateTick SEGMENT)
                     // =====================================================
@@ -606,15 +607,16 @@ async fn run() {
                         );
                     }
                     // =====================================================
-                    // CYAN ROLLING GEOMETRIC SEQUENCE (CENTER ANCHORED + ROTATED)
+                    // CYAN ROLLING GEOMETRIC SEQUENCE (LINEAR PERIMETER-MAPPED SPIRAL BAND)
                     // =====================================================
                     if let Some(&(1, first_x, first_y)) =
                         grid_points.iter().find(|(val, _, _)| *val == 1)
                     {
                         let stroke_cyan = Stroke::new(0.75);
                         let brush_cyan = Color::rgb8(0, 255, 255);
+                        let fill_cyan = Color::rgba8(0, 255, 255, 60); // Translucent band fill
 
-                        // 1. Establish the geometry of the first box exactly as you had it
+                        // 1. Establish the geometry of the core center anchor
                         let p1_center_x = center_x + (first_x as f64 * scale);
                         let p1_center_y = center_y - (first_y as f64 * scale);
 
@@ -625,7 +627,7 @@ async fn run() {
                         let square_center = Point::new(p1_center_x, p1_center_y);
                         let mut top_right = Point::new(right_x, top_y);
 
-                        // 2. Calculate the exact angle to Octave North
+                        // 2. Calculate astronomy rotation transform
                         let seconds_in_day =
                             (current_hour * 3600.0) + (current_minute * 60.0) + current_second;
                         let day_fraction = seconds_in_day / 86400.0;
@@ -637,82 +639,182 @@ async fn run() {
                         let north_angle_rad =
                             ((2.0 * (360.0 / 8.0)) + octave_rotation).to_radians();
 
-                        // 3. Create a rotation matrix centered on your screen center
                         let rotation_transform = Affine::translate((center.x, center.y))
                             * Affine::rotate(-north_angle_rad)
                             * Affine::translate((-center.x, -center.y));
 
-                        for _iteration in 0..9 {
+                        // 3. Define the Time Window Width (1.0 Hour rolling band)
+                        let band_hour_width = 1.0;
+
+                        // Convert global time to cascade track progress (0.0 to 9.0)
+                        let current_cascade_head = day_fraction * 9.0;
+                        let cascade_span_width = (band_hour_width / 24.0) * 9.0;
+                        let current_cascade_tail =
+                            (current_cascade_head - cascade_span_width).max(0.0);
+
+                        // Helper closure to map a factor (0.0 to 1.0) directly along a square's 4 sides linearly
+                        // Starting at East (middle of right edge) and moving counter-clockwise
+                        let sample_square_perimeter =
+                            |cx: f64, cy: f64, r: f64, factor: f64| -> Point {
+                                let f = factor.rem_euclid(1.0);
+                                if f < 0.125 {
+                                    // Right wall, moving up to top-right corner
+                                    let segment_f = f / 0.125;
+                                    Point::new(cx + r, cy - (segment_f * r * 0.5))
+                                } else if f < 0.375 {
+                                    // Top wall, moving right-to-left
+                                    let segment_f = (f - 0.125) / 0.25;
+                                    Point::new(cx + r - (segment_f * r * 2.0), cy - r)
+                                } else if f < 0.625 {
+                                    // Left wall, moving top-to-bottom
+                                    let segment_f = (f - 0.375) / 0.25;
+                                    Point::new(cx - r, cy - r + (segment_f * r * 2.0))
+                                } else if f < 0.875 {
+                                    // Bottom wall, moving left-to-right
+                                    let segment_f = (f - 0.625) / 0.25;
+                                    Point::new(cx - r + (segment_f * r * 2.0), cy + r)
+                                } else {
+                                    // Right wall, moving up from bottom-right to start
+                                    let segment_f = (f - 0.875) / 0.125;
+                                    Point::new(cx + r, cy + r - (segment_f * r * 0.5))
+                                }
+                            };
+
+                        let mut last_outer_radius = 0.0;
+
+                        for iteration in 0..9 {
                             let diagonal_distance = top_right.distance(square_center);
-                            let radius = diagonal_distance;
+                            let outer_radius = diagonal_distance;
+                            let inner_radius = last_outer_radius;
 
-                            //let circle = Circle::new(square_center, radius);
-                            // Pass the rotation matrix here instead of Affine::IDENTITY
-                            /*
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &circle,
-                            );
-                            */
+                            let out_left = square_center.x - outer_radius;
+                            let out_right = square_center.x + outer_radius;
+                            let out_top = square_center.y - outer_radius;
+                            let out_bottom = square_center.y + outer_radius;
 
-                            let bottom_intersect = Point::new(square_center.x + radius, bottom_y);
-                            let current_distance = radius;
-                            let dynamic_top_y = square_center.y - current_distance;
+                            // Isolate tracking windows for this layer
+                            let iter_f64 = iteration as f64;
+                            let fill_start =
+                                current_cascade_tail.clamp(iter_f64, iter_f64 + 1.0) - iter_f64;
+                            let fill_end =
+                                current_cascade_head.clamp(iter_f64, iter_f64 + 1.0) - iter_f64;
+                            let fill_factor = fill_end - fill_start;
+
+                            if fill_factor > 0.0 {
+                                let mut spiral_segment = BezPath::new();
+                                let steps = 40;
+
+                                if iteration == 0 {
+                                    // Inmost square core anchor
+                                    spiral_segment.move_to(square_center);
+                                    for s in 0..=steps {
+                                        let step_f =
+                                            fill_start + ((s as f64 / steps as f64) * fill_factor);
+                                        let pt = sample_square_perimeter(
+                                            square_center.x,
+                                            square_center.y,
+                                            outer_radius,
+                                            step_f,
+                                        );
+                                        spiral_segment.line_to(pt);
+                                    }
+                                } else {
+                                    // Bounded Ribbon: Trace forward along the inner square's perimeter walls
+                                    let inner_start = sample_square_perimeter(
+                                        square_center.x,
+                                        square_center.y,
+                                        inner_radius,
+                                        fill_start,
+                                    );
+                                    spiral_segment.move_to(inner_start);
+
+                                    for s in 0..=steps {
+                                        let step_f =
+                                            fill_start + ((s as f64 / steps as f64) * fill_factor);
+                                        let pt = sample_square_perimeter(
+                                            square_center.x,
+                                            square_center.y,
+                                            inner_radius,
+                                            step_f,
+                                        );
+                                        spiral_segment.line_to(pt);
+                                    }
+
+                                    // Bridge straight outward to the outer ring wall edge at the current timestamp
+                                    let outer_end = sample_square_perimeter(
+                                        square_center.x,
+                                        square_center.y,
+                                        outer_radius,
+                                        fill_end,
+                                    );
+                                    spiral_segment.line_to(outer_end);
+
+                                    // Trace backward along the outer square's perimeter walls
+                                    for s in (0..=steps).rev() {
+                                        let step_f =
+                                            fill_start + ((s as f64 / steps as f64) * fill_factor);
+                                        let pt = sample_square_perimeter(
+                                            square_center.x,
+                                            square_center.y,
+                                            outer_radius,
+                                            step_f,
+                                        );
+                                        spiral_segment.line_to(pt);
+                                    }
+                                }
+
+                                spiral_segment.close_path();
+
+                                scene.fill(
+                                    vello::peniko::Fill::NonZero,
+                                    rotation_transform,
+                                    fill_cyan,
+                                    None,
+                                    &spiral_segment,
+                                );
+                            }
+
+                            // --- DRAW WIREFRAME PERIMETERS ---
+                            let lines = [
+                                Line::new(
+                                    Point::new(out_left, out_top),
+                                    Point::new(out_right, out_top),
+                                ),
+                                Line::new(
+                                    Point::new(out_left, out_bottom),
+                                    Point::new(out_right, out_bottom),
+                                ),
+                                Line::new(
+                                    Point::new(out_left, out_top),
+                                    Point::new(out_left, out_bottom),
+                                ),
+                                Line::new(
+                                    Point::new(out_right, out_top),
+                                    Point::new(out_right, out_bottom),
+                                ),
+                            ];
+
+                            for line in &lines {
+                                scene.stroke(
+                                    &stroke_cyan,
+                                    rotation_transform,
+                                    brush_cyan,
+                                    None,
+                                    line,
+                                );
+                            }
+
+                            last_outer_radius = outer_radius;
+
+                            // Advance matrix calculation sizes for the next layer
+                            let bottom_intersect =
+                                Point::new(square_center.x + outer_radius, bottom_y);
+                            let dynamic_top_y = square_center.y - outer_radius;
                             let top_intersect = Point::new(bottom_intersect.x, dynamic_top_y);
-
-                            let box_left = square_center.x - radius;
-                            let box_right = square_center.x + radius;
-                            let box_top = square_center.y - radius;
-                            let box_bottom = square_center.y + radius;
-
-                            // Pass the rotation matrix to all lines as well
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_top),
-                                    Point::new(box_right, box_top),
-                                ),
-                            );
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_bottom),
-                                    Point::new(box_right, box_bottom),
-                                ),
-                            );
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_left, box_top),
-                                    Point::new(box_left, box_bottom),
-                                ),
-                            );
-                            scene.stroke(
-                                &stroke_cyan,
-                                rotation_transform,
-                                brush_cyan,
-                                None,
-                                &Line::new(
-                                    Point::new(box_right, box_top),
-                                    Point::new(box_right, box_bottom),
-                                ),
-                            );
-
                             top_right = top_intersect;
                         }
                     }
+
                     // =====================================================
                     // MOONLIGHT CONE (Aligned to your exact Solar Pipeline)
                     // =====================================================
@@ -883,6 +985,232 @@ async fn run() {
                             .font_size(22.0)
                             .brush(&Color::WHITE)
                             .draw(vello::peniko::Fill::NonZero, glyphs.into_iter());
+                    }
+
+                    // ==========================================
+                    // HELPERS
+                    // ==========================================
+
+                    fn polygon_vertices(
+                        center: Point,
+                        radius: f64,
+                        sides: usize,
+                        rotation_deg: f64,
+                    ) -> Vec<Point> {
+                        (0..sides)
+                            .map(|i| {
+                                let angle = rotation_deg + (i as f64 * (360.0 / sides as f64));
+                                point_on_circle(center, radius, angle)
+                            })
+                            .collect()
+                    }
+
+                    fn add_polygon(path: &mut BezPath, verts: &[Point]) {
+                        if verts.is_empty() {
+                            return;
+                        }
+
+                        path.move_to(verts[0]);
+
+                        for v in &verts[1..] {
+                            path.line_to(*v);
+                        }
+
+                        path.close_path();
+                    }
+
+                    // walks polygon edges counter-clockwise
+                    fn spiral_walk(path: &mut BezPath, verts: &[Point], start_idx: usize) {
+                        let len = verts.len();
+
+                        for i in 1..=len {
+                            let idx = (start_idx + i) % len;
+                            path.line_to(verts[idx]);
+                        }
+                    }
+
+                    if let Some(neptune) = planetary_positions.iter().find(|p| p.name == "Neptune")
+                    {
+                        let neptune_color = Color::rgba8(148, 12, 211, 28);
+                        let uranus_color = Color::rgba8(36, 56, 130, 28);
+                        let saturn_color = Color::rgba8(0, 191, 255, 28);
+                        let jupiter_color = Color::rgba8(50, 205, 50, 28);
+                        let venus_color = Color::rgba8(255, 215, 0, 28);
+                        let mercury_color = Color::rgba8(255, 69, 0, 28);
+
+                        // ==========================================
+                        // RADII
+                        // ==========================================
+
+                        let neptune_radius = inner_gray_radius;
+
+                        let uranus_radius = neptune_radius * (20.0_f64).to_radians().cos();
+
+                        let saturn_radius = uranus_radius * (22.5_f64).to_radians().cos();
+
+                        let jupiter_radius = saturn_radius * (30.0_f64).to_radians().cos();
+
+                        let venus_radius = jupiter_radius * (36.0_f64).to_radians().cos();
+
+                        let mercury_radius = venus_radius * (45.0_f64).to_radians().cos();
+
+                        // ==========================================
+                        // VERTICES
+                        // ==========================================
+
+                        let neptune_verts =
+                            polygon_vertices(center, neptune_radius, 9, neptune.angle);
+
+                        let uranus = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Uranus")
+                            .unwrap();
+                        let uranus_verts = polygon_vertices(center, uranus_radius, 8, uranus.angle);
+
+                        let saturn = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Saturn")
+                            .unwrap();
+                        let saturn_verts = polygon_vertices(center, saturn_radius, 6, saturn.angle);
+
+                        let jupiter = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Jupiter")
+                            .unwrap();
+                        let jupiter_verts =
+                            polygon_vertices(center, jupiter_radius, 5, jupiter.angle);
+
+                        let venus = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Venus")
+                            .unwrap();
+                        let venus_verts = polygon_vertices(center, venus_radius, 4, venus.angle);
+
+                        let mercury = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Mercury")
+                            .unwrap();
+                        let mercury_verts =
+                            polygon_vertices(center, mercury_radius, 3, mercury.angle);
+
+                        // ==========================================
+                        // FILLED PLANETS
+                        // ==========================================
+
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &neptune_verts);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, neptune_color, None, &p);
+
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &uranus_verts);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, uranus_color, None, &p);
+
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &saturn_verts);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, saturn_color, None, &p);
+
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &jupiter_verts);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, jupiter_color, None, &p);
+
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &venus_verts);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, venus_color, None, &p);
+
+                        let mut p = BezPath::new();
+                        add_polygon(&mut p, &mercury_verts);
+                        //scene.fill(Fill::NonZero, Affine::IDENTITY, mercury_color, None, &p);
+
+                        // ==========================================
+                        // SINGLE CONTINUOUS SPIRAL (START AT SUN)
+                        // ==========================================
+
+                        let mut spiral = BezPath::new();
+
+                        // 1. Find the Sun's position to use as our target angle
+                        let sun_angle = planetary_positions
+                            .iter()
+                            .find(|p| p.name == "Sun")
+                            .map(|p| p.angle)
+                            .unwrap_or(0.0); // Fallback to 0.0 if "Sun" isn't found
+
+                        // 2. Find which Neptune vertex is closest to the Sun's alignment
+                        let mut current_idx = neptune_verts
+                            .iter()
+                            .enumerate()
+                            .min_by(|(_, a), (_, b)| {
+                                // Calculate 2D position of the Sun's vector direction at Neptune's radius
+                                let sun_target_pos =
+                                    point_on_circle(center, neptune_radius, sun_angle);
+
+                                let dist_a = (a.x - sun_target_pos.x).hypot(a.y - sun_target_pos.y);
+                                let dist_b = (b.x - sun_target_pos.x).hypot(b.y - sun_target_pos.y);
+                                dist_a
+                                    .partial_cmp(&dist_b)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+
+                        // 3. Start the spiral from this new starting point
+                        spiral.move_to(neptune_verts[current_idx]);
+                        spiral_walk(&mut spiral, &neptune_verts, current_idx);
+
+                        // Helper to find closest next vertex (Keep this exactly as it is)
+                        let find_closest_idx = |current_pos: Point,
+                                                next_verts: &[Point]|
+                         -> usize {
+                            next_verts
+                                .iter()
+                                .enumerate()
+                                .min_by(|(_, a), (_, b)| {
+                                    let dist_a = (a.x - current_pos.x).hypot(a.y - current_pos.y);
+                                    let dist_b = (b.x - current_pos.x).hypot(b.y - current_pos.y);
+                                    dist_a
+                                        .partial_cmp(&dist_b)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                                .map(|(i, _)| i)
+                                .unwrap_or(0)
+                        };
+
+                        // --- BRIDGE TO URANUS ---
+                        let last_pos = neptune_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &uranus_verts);
+                        spiral.line_to(uranus_verts[current_idx]);
+                        spiral_walk(&mut spiral, &uranus_verts, current_idx);
+
+                        // --- BRIDGE TO SATURN ---
+                        let last_pos = uranus_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &saturn_verts);
+                        spiral.line_to(saturn_verts[current_idx]);
+                        spiral_walk(&mut spiral, &saturn_verts, current_idx);
+
+                        // --- BRIDGE TO JUPITER ---
+                        let last_pos = saturn_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &jupiter_verts);
+                        spiral.line_to(jupiter_verts[current_idx]);
+                        spiral_walk(&mut spiral, &jupiter_verts, current_idx);
+
+                        // --- BRIDGE TO VENUS ---
+                        let last_pos = jupiter_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &venus_verts);
+                        spiral.line_to(venus_verts[current_idx]);
+                        spiral_walk(&mut spiral, &venus_verts, current_idx);
+
+                        // --- BRIDGE TO MERCURY ---
+                        let last_pos = venus_verts[current_idx];
+                        current_idx = find_closest_idx(last_pos, &mercury_verts);
+                        spiral.line_to(mercury_verts[current_idx]);
+                        spiral_walk(&mut spiral, &mercury_verts, current_idx);
+
+                        scene.stroke(
+                            &Stroke::new(1.0),
+                            Affine::IDENTITY,
+                            Color::rgb8(0, 255, 255),
+                            None,
+                            &spiral,
+                        );
                     }
                     // =====================================================
                     // RENDER
